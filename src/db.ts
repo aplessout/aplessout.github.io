@@ -54,6 +54,31 @@ export interface Series {
   plot?: string;
 }
 
+export interface Season {
+  /** `${seriesId}:${seasonNumber}` */
+  id: string;
+  seriesId: string;
+  number: number;
+  name?: string;
+  episodeCount?: number;
+  cover?: string;
+}
+
+export interface Episode {
+  /** `${seriesId}:${providerEpisodeId}` — local key, never sent to the provider. */
+  id: string;
+  /** The provider's own episode id, used to build the stream URL. */
+  streamId: string;
+  seriesId: string;
+  season: number;
+  episodeNum: number;
+  title: string;
+  ext?: string;
+  duration?: string;
+  plot?: string;
+  icon?: string;
+}
+
 export interface Favourite {
   key: string;
   kind: Kind;
@@ -71,6 +96,9 @@ export interface HistoryEntry {
   icon?: string;
   destination: Destination;
   playedAt: number;
+  /** Needed to rebuild the stream URL for episodes, whose key is composite. */
+  streamId?: string;
+  ext?: string;
 }
 
 export interface Progress {
@@ -90,6 +118,8 @@ class IptvDb extends Dexie {
   live!: Table<LiveChannel, string>;
   movies!: Table<Movie, string>;
   series!: Table<Series, string>;
+  seasons!: Table<Season, string>;
+  episodes!: Table<Episode, string>;
   categories!: Table<Category, string>;
   favourites!: Table<Favourite, string>;
   history!: Table<HistoryEntry, string>;
@@ -115,6 +145,12 @@ class IptvDb extends Dexie {
       live: 'id, categoryId, name, num',
       movies: 'id, categoryId, name, added',
       series: 'id, categoryId, name',
+    });
+
+    // v3 adds season/episode storage. New tables only, so no row migration.
+    this.version(3).stores({
+      seasons: 'id, seriesId',
+      episodes: 'id, seriesId, season',
     });
   }
 }

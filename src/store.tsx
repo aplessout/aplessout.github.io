@@ -17,11 +17,12 @@ import {
   type Kind,
   type LiveChannel,
   type Movie,
+  type Progress,
   type ProviderConfig,
   type Series,
 } from './db';
 import { seedDemo } from './lib/fixtures';
-import { fetchCategories, fetchLive, fetchMovies, fetchSeries } from './lib/xtream';
+import { fetchCategories, fetchLive, fetchMovies, fetchSeries, fetchSeriesDetail } from './lib/xtream';
 
 /** Home only ever renders a handful of titles, so it never needs the full table. */
 const HOME_LIMIT = 24;
@@ -33,6 +34,12 @@ export interface CatalogueCounts {
   series: number;
 }
 
+interface SeriesDetailResult {
+  seasons: number;
+  episodes: number;
+  error?: string;
+}
+
 interface CatalogueContext {
   live: LiveChannel[];
   movies: Movie[];
@@ -40,6 +47,7 @@ interface CatalogueContext {
   counts: CatalogueCounts;
   favourites: Favourite[];
   history: HistoryEntry[];
+  progress: Progress[];
   provider: ProviderConfig | null;
   loading: boolean;
   status: string;
@@ -47,10 +55,18 @@ interface CatalogueContext {
   reload: () => Promise<void>;
   seed: () => Promise<void>;
   syncProvider: (creds: ProviderConfig) => Promise<void>;
+  syncSeriesDetail: (seriesId: string) => Promise<SeriesDetailResult>;
   clearCatalogue: () => Promise<void>;
   reloadSettings: () => Promise<void>;
   toggleFavourite: (kind: Kind, itemId: string, name: string, icon?: string) => Promise<void>;
-  recordHistory: (kind: Kind, itemId: string, name: string, destination: Destination, icon?: string) => Promise<void>;
+  recordHistory: (
+    kind: Kind,
+    itemId: string,
+    name: string,
+    destination: Destination,
+    icon?: string,
+    extra?: { streamId?: string; ext?: string }
+  ) => Promise<void>;
 }
 
 const CatalogueCtx = createContext<CatalogueContext | null>(null);
@@ -62,29 +78,42 @@ export function CatalogueProvider({ children }: { children: ReactNode }) {
   const [counts, setCounts] = useState<CatalogueCounts>({ live: 0, movie: 0, series: 0 });
   const [favourites, setFavourites] = useState<Favourite[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [progress, setProgress] = useState<Progress[]>([]);
   const [provider, setProvider] = useState<ProviderConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
 
   const reload = useCallback(async () => {
-    const [liveRows, movieRows, seriesRows, favouriteRows, historyRows, savedProvider, liveCount, movieCount, seriesCount] =
-      await Promise.all([
-        db.live.orderBy('num').limit(LIVE_RAIL_LIMIT).toArray(),
-        db.movies.orderBy('added').reverse().limit(HOME_LIMIT).toArray(),
-        db.series.orderBy('name').limit(HOME_LIMIT).toArray(),
-        db.favourites.toArray(),
-        db.history.orderBy('playedAt').reverse().limit(40).toArray(),
-        getSetting('provider'),
-        db.live.count(),
-        db.movies.count(),
-        db.series.count(),
-      ]);
+    const [
+      liveRows,
+      movieRows,
+      seriesRows,
+      favouriteRows,
+      historyRows,
+      progressRows,
+      savedProvider,
+      liveCount,
+      movieCount,
+      seriesCount,
+    ] = await Promise.all([
+      db.live.orderBy('num').limit(LIVE_RAIL_LIMIT).toArray(),
+      db.movies.orderBy('added').reverse().limit(HOME_LIMIT).toArray(),
+      db.series.orderBy('name').limit(HOME_LIMIT).toArray(),
+      db.favourites.toArray(),
+      db.history.orderBy('playedAt').reverse().limit(40).toArray(),
+      db.progress.orderBy('updatedAt').reverse().limit(60).toArray(),
+      getSetting('provider'),
+      db.live.count(),
+      db.movies.count(),
+      db.series.count(),
+    ]);
 
     setLive(liveRows);
     setMovies(movieRows);
     setSeries(seriesRows);
     setFavourites(favouriteRows.sort((a, b) => b.addedAt - a.addedAt));
     setHistory(historyRows);
+    setProgress(progressRows);
     setProvider(savedProvider ?? null);
     setCounts({ live: liveCount, movie: movieCount, series: seriesCount });
   }, []);
@@ -137,30 +166,60 @@ export function CatalogueProvider({ children }: { children: ReactNode }) {
     [reload]
   );
 
+  /** Episodes are fetched per series on demand: syncing every series up front would be enormous. */
+  const syncSeriesDetail = useCallback(
+    async (seriesId: string): Promise<SeriesDetailResult> => {
+      if (!provider) return { seasons: 0, episodes: 0, error: 'No provider configured.' };
+      try {
+        const detail = await fetchSeriesDetail(provider, seriesId);
+        await db.transaction('rw', [db.seasons, db.episodes], async () => {
+          await db.seasons.where('seriesId').equals(seriesId).delete();
+          await db.episodes.where('seriesId').equals(seriesId).delete();
+          await db.seasons.bulkPut(detail.seasons);
+          await db.episodes.bulkPut(detail.episodes);
+        });
+        return { seasons: detail.seasons.length, episodes: detail.episodes.length };
+      } catch (error) {
+        return {
+          seasons: 0,
+          episodes: 0,
+          error: error instanceof Error ? error.message : 'Could not load episodes.',
+        };
+      }
+    },
+    [provider]
+  );
+
   const clearCatalogue = useCallback(async () => {
-    await db.transaction('rw', [db.live, db.movies, db.series, db.categories], async () => {
+    await db.transaction('rw', [db.live, db.movies, db.series, db.categories, db.seasons, db.episodes], async () => {
       await db.live.clear();
       await db.movies.clear();
       await db.series.clear();
       await db.categories.clear();
+      await db.seasons.clear();
+      await db.episodes.clear();
     });
     await reload();
     setStatus('Catalogue cleared. Favourites and history were kept.');
   }, [reload]);
 
-  const toggleFavourite = useCallback(
-    async (kind: Kind, itemId: string, name: string, icon?: string) => {
-      const key = `${kind}:${itemId}`;
-      const existing = await db.favourites.get(key);
-      if (existing) await db.favourites.delete(key);
-      else await db.favourites.put({ key, kind, itemId, name, icon, addedAt: Date.now() });
-      setFavourites((await db.favourites.toArray()).sort((a, b) => b.addedAt - a.addedAt));
-    },
-    []
-  );
+  const toggleFavourite = useCallback(async (kind: Kind, itemId: string, name: string, icon?: string) => {
+    const key = `${kind}:${itemId}`;
+    const existing = await db.favourites.get(key);
+    if (existing) await db.favourites.delete(key);
+    else await db.favourites.put({ key, kind, itemId, name, icon, addedAt: Date.now() });
+    setFavourites((await db.favourites.toArray()).sort((a, b) => b.addedAt - a.addedAt));
+  }, []);
 
   const recordHistory = useCallback(
-    async (kind: Kind, itemId: string, name: string, destination: Destination, icon?: string) => {
+    async (
+      kind: Kind,
+      itemId: string,
+      name: string,
+      destination: Destination,
+      icon?: string,
+      extra?: { streamId?: string; ext?: string }
+    ) => {
       const entry: HistoryEntry = {
         key: `${kind}:${itemId}`,
         kind,
@@ -169,6 +228,8 @@ export function CatalogueProvider({ children }: { children: ReactNode }) {
         icon,
         destination,
         playedAt: Date.now(),
+        streamId: extra?.streamId,
+        ext: extra?.ext,
       };
       await db.history.put(entry);
       setHistory(await db.history.orderBy('playedAt').reverse().limit(40).toArray());
@@ -184,6 +245,7 @@ export function CatalogueProvider({ children }: { children: ReactNode }) {
       counts,
       favourites,
       history,
+      progress,
       provider,
       loading,
       status,
@@ -191,6 +253,7 @@ export function CatalogueProvider({ children }: { children: ReactNode }) {
       reload,
       seed,
       syncProvider,
+      syncSeriesDetail,
       clearCatalogue,
       reloadSettings: reload,
       toggleFavourite,
@@ -203,12 +266,14 @@ export function CatalogueProvider({ children }: { children: ReactNode }) {
       counts,
       favourites,
       history,
+      progress,
       provider,
       loading,
       status,
       reload,
       seed,
       syncProvider,
+      syncSeriesDetail,
       clearCatalogue,
       toggleFavourite,
       recordHistory,

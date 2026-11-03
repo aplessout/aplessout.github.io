@@ -1,4 +1,4 @@
-import type { Category, Kind, LiveChannel, Movie, Series } from '../db';
+import type { Category, Episode, Kind, LiveChannel, Movie, Season, Series } from '../db';
 
 export interface XtreamCreds {
   baseUrl: string;
@@ -46,6 +46,32 @@ interface RawSeries {
   year?: string;
   rating?: string;
   plot?: string;
+}
+
+interface RawEpisode {
+  id?: number | string;
+  episode_num?: number | string;
+  season?: number | string;
+  title?: string;
+  container_extension?: string;
+  info?: { plot?: string; duration?: string; movie_image?: string };
+}
+
+interface RawSeriesInfo {
+  seasons?: Array<{
+    season_number?: number | string;
+    name?: string;
+    episode_count?: number | string;
+    cover?: string;
+  }>;
+  episodes?: Record<string, RawEpisode[]>;
+  info?: { plot?: string; cast?: string; genre?: string; rating?: string; releaseDate?: string; cover?: string };
+}
+
+export interface SeriesDetail {
+  seasons: Season[];
+  episodes: Episode[];
+  info: { plot?: string; cast?: string; genre?: string; rating?: string; year?: string; cover?: string };
 }
 
 interface AuthPayload {
@@ -161,6 +187,75 @@ export async function fetchSeries(creds: XtreamCreds): Promise<Series[]> {
       rating: row.rating || undefined,
       plot: row.plot || undefined,
     }));
+}
+
+/**
+ * Seasons and episodes for one series.
+ *
+ * The provider keys episodes by season in an object rather than a flat list, and
+ * the episode id is what the stream URL needs — never the series id.
+ */
+export async function fetchSeriesDetail(creds: XtreamCreds, seriesId: string): Promise<SeriesDetail> {
+  const payload = await api<RawSeriesInfo>(creds, { action: 'get_series_info', series_id: seriesId });
+  const episodes: Episode[] = [];
+  const countsBySeason = new Map<number, number>();
+
+  for (const [seasonKey, list] of Object.entries(payload.episodes ?? {})) {
+    if (!Array.isArray(list)) continue;
+    const fallbackSeason = Number(seasonKey) || 1;
+    list.forEach((raw, index) => {
+      if (raw?.id === undefined || raw.id === null) return;
+      const season = Number(raw.season ?? fallbackSeason) || fallbackSeason;
+      const episodeNum = Number(raw.episode_num ?? index + 1) || index + 1;
+      episodes.push({
+        id: `${seriesId}:${raw.id}`,
+        streamId: String(raw.id),
+        seriesId,
+        season,
+        episodeNum,
+        title: (raw.title ?? '').trim() || `Episode ${episodeNum}`,
+        ext: raw.container_extension || 'mkv',
+        duration: raw.info?.duration || undefined,
+        plot: raw.info?.plot || undefined,
+        icon: raw.info?.movie_image || undefined,
+      });
+    });
+    countsBySeason.set(fallbackSeason, (countsBySeason.get(fallbackSeason) ?? 0) + list.length);
+  }
+
+  const seasons: Season[] = (payload.seasons ?? [])
+    .filter((row) => row.season_number !== undefined)
+    .map((row) => ({
+      id: `${seriesId}:${row.season_number}`,
+      seriesId,
+      number: Number(row.season_number) || 0,
+      name: row.name || `Season ${row.season_number}`,
+      episodeCount: Number(row.episode_count ?? 0) || undefined,
+      cover: row.cover || undefined,
+    }));
+
+  // Some panels list seasons only inside the episodes map.
+  for (const [number, count] of countsBySeason) {
+    if (!seasons.some((season) => season.number === number)) {
+      seasons.push({ id: `${seriesId}:${number}`, seriesId, number, name: `Season ${number}`, episodeCount: count });
+    }
+  }
+  seasons.sort((a, b) => a.number - b.number);
+  episodes.sort((a, b) => a.season - b.season || a.episodeNum - b.episodeNum);
+
+  const info = payload.info ?? {};
+  return {
+    seasons,
+    episodes,
+    info: {
+      plot: info.plot || undefined,
+      cast: info.cast || undefined,
+      genre: info.genre || undefined,
+      rating: info.rating || undefined,
+      year: info.releaseDate ? info.releaseDate.slice(0, 4) : undefined,
+      cover: info.cover || undefined,
+    },
+  };
 }
 
 /** Xtream delivers streams as conventional paths rather than full URLs. */

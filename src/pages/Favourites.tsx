@@ -3,12 +3,22 @@ import type { Kind } from '../db';
 import { useCatalogue } from '../store';
 import { Chip, EmptyState, PosterImage, SectionHeader } from '../components/ui';
 import PlaySheet, { type PlayTarget } from '../components/PlaySheet';
+import SeriesSheet, { type SeriesRef } from '../components/SeriesSheet';
 
 export default function Favourites() {
   const { favourites } = useCatalogue();
   const [filter, setFilter] = useState<Kind | 'all'>('all');
   const [target, setTarget] = useState<PlayTarget | null>(null);
+  const [seriesTarget, setSeriesTarget] = useState<SeriesRef | null>(null);
   const visible = favourites.filter((entry) => filter === 'all' || entry.kind === filter);
+
+  function open(kind: Kind, id: string, name: string, icon?: string) {
+    if (kind === 'series') {
+      setSeriesTarget({ id, name, icon });
+      return;
+    }
+    setTarget({ kind, id, name, icon });
+  }
 
   return (
     <div className="pt-4">
@@ -30,7 +40,7 @@ export default function Favourites() {
             <button
               key={entry.key}
               type="button"
-              onClick={() => setTarget({ kind: entry.kind, id: entry.itemId, name: entry.name, icon: entry.icon })}
+              onClick={() => open(entry.kind, entry.itemId, entry.name, entry.icon)}
               className="text-left transition hover:scale-[1.02]"
             >
               <PosterImage name={entry.name} icon={entry.icon} square={entry.kind === 'live'} />
@@ -41,6 +51,14 @@ export default function Favourites() {
       )}
 
       <PlaySheet target={target} onClose={() => setTarget(null)} />
+      <SeriesSheet
+        series={seriesTarget}
+        onClose={() => setSeriesTarget(null)}
+        onPlay={(next) => {
+          setSeriesTarget(null);
+          setTarget(next);
+        }}
+      />
     </div>
   );
 }

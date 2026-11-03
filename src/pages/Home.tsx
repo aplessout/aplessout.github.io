@@ -1,14 +1,24 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useCatalogue } from '../store';
 import { PosterImage, Rail, EmptyState } from '../components/ui';
 import PlaySheet, { type PlayTarget } from '../components/PlaySheet';
+import SeriesSheet, { type SeriesRef } from '../components/SeriesSheet';
 
 export default function Home() {
-  const { movies, series, live, history, loading } = useCatalogue();
+  const { movies, series, live, history, progress, loading } = useCatalogue();
   const [target, setTarget] = useState<PlayTarget | null>(null);
+  const [seriesTarget, setSeriesTarget] = useState<SeriesRef | null>(null);
 
   const featured = movies[0];
-  const resume = history.filter((entry) => entry.kind !== 'live');
+
+  // Continue Watching is progress-driven: unfinished items only.
+  const resume = useMemo(() => {
+    const byKey = new Map(progress.map((row) => [row.key, row]));
+    return history
+      .map((entry) => ({ entry, saved: byKey.get(entry.key) }))
+      .filter(({ saved }) => saved && saved.completed === 0 && saved.positionSec > 10 && saved.durationSec > 0)
+      .slice(0, 12);
+  }, [history, progress]);
 
   return (
     <div className="pb-8">
@@ -27,17 +37,33 @@ export default function Home() {
             <div className="mt-4 flex gap-2">
               <button
                 type="button"
-                onClick={() => setTarget({ kind: 'movie', id: featured.id, name: featured.name, icon: featured.icon, ext: featured.ext })}
+                onClick={() =>
+                  setTarget({
+                    kind: 'movie',
+                    id: featured.id,
+                    name: featured.name,
+                    icon: featured.icon,
+                    ext: featured.ext,
+                  })
+                }
                 className="rounded-lg bg-white px-5 py-2.5 text-[13px] font-semibold text-black hover:bg-white/90"
               >
                 Play
               </button>
               <button
                 type="button"
-                onClick={() => setTarget({ kind: 'movie', id: featured.id, name: featured.name, icon: featured.icon, ext: featured.ext })}
+                onClick={() =>
+                  setTarget({
+                    kind: 'movie',
+                    id: featured.id,
+                    name: featured.name,
+                    icon: featured.icon,
+                    ext: featured.ext,
+                  })
+                }
                 className="rounded-lg border border-white/20 px-5 py-2.5 text-[13px] font-semibold text-white/85 hover:border-white/40"
               >
-                More info
+                Choose destination
               </button>
             </div>
           </div>
@@ -55,17 +81,35 @@ export default function Home() {
 
       {resume.length > 0 && (
         <Rail title="Continue watching">
-          {resume.slice(0, 12).map((entry) => (
-            <button
-              key={entry.key}
-              type="button"
-              onClick={() => setTarget({ kind: entry.kind, id: entry.itemId, name: entry.name, icon: entry.icon })}
-              className="w-[112px] shrink-0 text-left transition hover:opacity-90 md:w-[132px]"
-            >
-              <PosterImage name={entry.name} icon={entry.icon} />
-              <p className="mt-1.5 truncate text-[12px] text-white/80">{entry.name}</p>
-            </button>
-          ))}
+          {resume.map(({ entry, saved }) => {
+            const percent = saved ? Math.min(100, Math.round((saved.positionSec / saved.durationSec) * 100)) : 0;
+            return (
+              <button
+                key={entry.key}
+                type="button"
+                onClick={() =>
+                  setTarget({
+                    kind: entry.kind,
+                    id: entry.itemId,
+                    name: entry.name,
+                    icon: entry.icon,
+                    streamId: entry.streamId,
+                    ext: entry.ext,
+                  })
+                }
+                className="w-[112px] shrink-0 text-left transition hover:opacity-90 md:w-[132px]"
+              >
+                <div className="relative">
+                  <PosterImage name={entry.name} icon={entry.icon} />
+                  <div className="absolute inset-x-1 bottom-1 h-[3px] overflow-hidden rounded-full bg-white/25">
+                    <div className="h-full rounded-full bg-brand" style={{ width: `${percent}%` }} />
+                  </div>
+                </div>
+                <p className="mt-1.5 truncate text-[12px] text-white/80">{entry.name}</p>
+                <p className="text-[11px] text-white/35">{percent}% watched</p>
+              </button>
+            );
+          })}
         </Rail>
       )}
 
@@ -75,7 +119,9 @@ export default function Home() {
             <button
               key={movie.id}
               type="button"
-              onClick={() => setTarget({ kind: 'movie', id: movie.id, name: movie.name, icon: movie.icon, ext: movie.ext })}
+              onClick={() =>
+                setTarget({ kind: 'movie', id: movie.id, name: movie.name, icon: movie.icon, ext: movie.ext })
+              }
               className="w-[112px] shrink-0 text-left transition hover:scale-[1.03] md:w-[132px]"
             >
               <PosterImage name={movie.name} icon={movie.icon} />
@@ -91,7 +137,7 @@ export default function Home() {
             <button
               key={show.id}
               type="button"
-              onClick={() => setTarget({ kind: 'series', id: show.id, name: show.name, icon: show.icon })}
+              onClick={() => setSeriesTarget({ id: show.id, name: show.name, icon: show.icon, plot: show.plot, year: show.year, rating: show.rating })}
               className="w-[112px] shrink-0 text-left transition hover:scale-[1.03] md:w-[132px]"
             >
               <PosterImage name={show.name} icon={show.icon} />
@@ -118,6 +164,14 @@ export default function Home() {
       )}
 
       <PlaySheet target={target} onClose={() => setTarget(null)} />
+      <SeriesSheet
+        series={seriesTarget}
+        onClose={() => setSeriesTarget(null)}
+        onPlay={(next) => {
+          setSeriesTarget(null);
+          setTarget(next);
+        }}
+      />
     </div>
   );
 }

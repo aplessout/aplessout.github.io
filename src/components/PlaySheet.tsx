@@ -7,27 +7,45 @@ import { PosterImage } from './ui';
 
 export interface PlayTarget {
   kind: Kind;
+  /** Local key: movie/channel id, or the composite episode key. */
   id: string;
   name: string;
   icon?: string;
   ext?: string;
+  /** Provider id when it differs from the local key (episodes). */
+  streamId?: string;
+  /** Favourite entry to toggle, when playing something nested (an episode of a series). */
+  favourite?: { kind: Kind; id: string; name: string; icon?: string };
 }
 
 export default function PlaySheet({ target, onClose }: { target: PlayTarget | null; onClose: () => void }) {
-  const { provider, favourites, toggleFavourite, recordHistory } = useCatalogue();
+  const { provider, favourites, toggleFavourite, recordHistory, reload } = useCatalogue();
   const [mode, setMode] = useState<'choose' | 'device'>('choose');
   const [note, setNote] = useState('');
   const [launchUrl, setLaunchUrl] = useState('');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastSaved = useRef(0);
+  const resumeAt = useRef(0);
 
-  const url = target && provider ? streamUrl(provider, target.kind, target.id, target.ext) : '';
-  const isFavourite = target ? favourites.some((entry) => entry.key === `${target.kind}:${target.id}`) : false;
+  const url = target && provider ? streamUrl(provider, target.kind, target.streamId ?? target.id, target.ext) : '';
+  const favourite = target?.favourite ?? (target ? { kind: target.kind, id: target.id, name: target.name, icon: target.icon } : null);
+  const isFavourite = favourite ? favourites.some((entry) => entry.key === `${favourite.kind}:${favourite.id}`) : false;
 
   useEffect(() => {
     setMode('choose');
     setNote('');
     setLaunchUrl('');
+    resumeAt.current = 0;
+    if (!target) return;
+
+    let cancelled = false;
+    void db.progress.get(`${target.kind}:${target.id}`).then((row) => {
+      // Only a half-watched item resumes; a finished one starts over.
+      if (!cancelled && row && row.completed === 0) resumeAt.current = row.positionSec;
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [target]);
 
   if (!target) return null;
@@ -44,19 +62,21 @@ export default function PlaySheet({ target, onClose }: { target: PlayTarget | nu
       return;
     }
     setMode('device');
-    await recordHistory(target!.kind, target!.id, target!.name, 'device', target!.icon);
+    await recordHistory(target!.kind, target!.id, target!.name, 'device', target!.icon, {
+      streamId: target!.streamId,
+      ext: target!.ext,
+    });
   }
 
   async function playOnRoku() {
     const ip = (await getSetting('rokuIp')) ?? '';
     const shortcut = (await getSetting('rokuShortcut')) ?? 'Roku Play';
 
+    setLaunchUrl(ip && url ? buildLaunchUrl(ip, url, url.includes('.m3u8') ? 'hls' : 'mp4') : '');
     if (!url) {
       setNote('Connect your provider in Settings first — demo entries have no real stream.');
       return;
     }
-    setLaunchUrl(buildLaunchUrl(ip, url, url.includes('.m3u8') ? 'hls' : 'mp4'));
-
     if (!ip.trim()) {
       setNote('Add your Roku IP in Settings.');
       return;
@@ -65,25 +85,41 @@ export default function PlaySheet({ target, onClose }: { target: PlayTarget | nu
     const result = dispatchToRoku(ip, url, shortcut);
     if (result.dispatched) {
       setNote('Handed to the Roku Shortcut. Confirmation appears when the Shortcut calls back.');
-      await recordHistory(target!.kind, target!.id, target!.name, 'roku', target!.icon);
+      await recordHistory(target!.kind, target!.id, target!.name, 'roku', target!.icon, {
+        streamId: target!.streamId,
+        ext: target!.ext,
+      });
     } else {
       setNote(result.reason ?? 'Dispatch is not available in this browser.');
     }
   }
 
-  function handleTimeUpdate() {
+  async function saveProgress(completed = false) {
     const video = videoRef.current;
     if (!video || !Number.isFinite(video.duration) || video.duration === 0) return;
     const now = Date.now();
-    if (now - lastSaved.current < 15000) return;
+    if (!completed && now - lastSaved.current < 15000) return;
     lastSaved.current = now;
-    void db.progress.put({
+
+    const atEnd = completed || video.currentTime / video.duration >= 0.95 || video.duration - video.currentTime < 30;
+    await db.progress.put({
       key: `${target!.kind}:${target!.id}`,
       positionSec: video.currentTime,
       durationSec: video.duration,
-      completed: video.currentTime / video.duration > 0.95 ? 1 : 0,
+      completed: atEnd ? 1 : 0,
       updatedAt: now,
     });
+    // Keeps the Continue Watching rail honest as soon as a title finishes.
+    if (atEnd) await reload();
+  }
+
+  function handleLoadedMetadata() {
+    const video = videoRef.current;
+    if (!video || resumeAt.current <= 5) return;
+    if (video.duration - resumeAt.current > 30) {
+      video.currentTime = resumeAt.current;
+      setNote(`Resumed at ${Math.floor(resumeAt.current / 60)} min.`);
+    }
   }
 
   async function copyLaunchUrl() {
@@ -117,7 +153,7 @@ export default function PlaySheet({ target, onClose }: { target: PlayTarget | nu
           <div className="mt-5 space-y-2">
             <button
               type="button"
-              onClick={playOnDevice}
+              onClick={() => void playOnDevice()}
               className="w-full rounded-xl bg-white px-4 py-3 text-left text-[14px] font-semibold text-black transition hover:bg-white/90"
             >
               Play on this device
@@ -125,7 +161,7 @@ export default function PlaySheet({ target, onClose }: { target: PlayTarget | nu
             </button>
             <button
               type="button"
-              onClick={playOnRoku}
+              onClick={() => void playOnRoku()}
               className="w-full rounded-xl border border-white/15 px-4 py-3 text-left text-[14px] font-semibold transition hover:border-white/35"
             >
               Play on Roku
@@ -135,7 +171,7 @@ export default function PlaySheet({ target, onClose }: { target: PlayTarget | nu
             </button>
             <button
               type="button"
-              onClick={() => void toggleFavourite(target!.kind, target!.id, target!.name, target!.icon)}
+              onClick={() => favourite && void toggleFavourite(favourite.kind, favourite.id, favourite.name, favourite.icon)}
               className="w-full rounded-xl border border-white/10 px-4 py-2.5 text-left text-[13px] text-white/70 transition hover:text-white"
             >
               {isFavourite ? 'Remove from favourites' : 'Add to favourites'}
@@ -150,7 +186,10 @@ export default function PlaySheet({ target, onClose }: { target: PlayTarget | nu
                 controls
                 autoPlay
                 playsInline
-                onTimeUpdate={handleTimeUpdate}
+                onLoadedMetadata={handleLoadedMetadata}
+                onTimeUpdate={() => void saveProgress()}
+                onPause={() => void saveProgress()}
+                onEnded={() => void saveProgress(true)}
                 onError={() => setNote('This stream would not play. The format may be unsupported on this device.')}
                 className="w-full rounded-xl bg-black"
               />

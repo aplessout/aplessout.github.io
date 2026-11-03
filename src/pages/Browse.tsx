@@ -4,6 +4,7 @@ import { useCatalogue } from '../store';
 import { loadBrowsePage, loadCategories, type BrowseItem } from '../lib/query';
 import { Chip, EmptyState, PosterImage, SectionHeader } from '../components/ui';
 import PlaySheet, { type PlayTarget } from '../components/PlaySheet';
+import SeriesSheet, { type SeriesRef } from '../components/SeriesSheet';
 
 const titles: Record<Kind, string> = { live: 'Live TV', movie: 'Movies', series: 'Series' };
 const PAGE_SIZE = 60;
@@ -19,6 +20,7 @@ export default function Browse({ kind }: { kind: Kind }) {
   const [loading, setLoading] = useState(true);
   const [exhausted, setExhausted] = useState(false);
   const [target, setTarget] = useState<PlayTarget | null>(null);
+  const [seriesTarget, setSeriesTarget] = useState<SeriesRef | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(query), 250);
@@ -60,6 +62,14 @@ export default function Browse({ kind }: { kind: Kind }) {
   }, [kind, counts[kind]]);
 
   const total = counts[kind];
+
+  function open(item: BrowseItem) {
+    if (kind === 'series') {
+      setSeriesTarget({ id: item.id, name: item.name, icon: item.icon });
+      return;
+    }
+    setTarget({ kind, id: item.id, name: item.name, icon: item.icon, ext: item.ext });
+  }
 
   return (
     <div className="pt-4">
@@ -107,12 +117,7 @@ export default function Browse({ kind }: { kind: Kind }) {
         <>
           <div className="grid grid-cols-3 gap-3 px-4 md:grid-cols-5 md:gap-4 md:px-8 lg:grid-cols-6">
             {items.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setTarget({ kind, id: item.id, name: item.name, icon: item.icon, ext: item.ext })}
-                className="text-left transition hover:scale-[1.02]"
-              >
+              <button key={item.id} type="button" onClick={() => open(item)} className="text-left transition hover:scale-[1.02]">
                 <PosterImage name={item.name} icon={item.icon} square={kind === 'live'} />
                 <p className="mt-1.5 line-clamp-2 text-[12px] leading-snug text-white/80">{item.name}</p>
               </button>
@@ -137,6 +142,14 @@ export default function Browse({ kind }: { kind: Kind }) {
       )}
 
       <PlaySheet target={target} onClose={() => setTarget(null)} />
+      <SeriesSheet
+        series={seriesTarget}
+        onClose={() => setSeriesTarget(null)}
+        onPlay={(next) => {
+          setSeriesTarget(null);
+          setTarget(next);
+        }}
+      />
     </div>
   );
 }
