@@ -11,7 +11,6 @@ export interface BrowseItem {
 
 /** Scanning more than this to answer one query costs more than it is worth. */
 const SCAN_BUDGET = 12000;
-const CHUNK = 2000;
 
 interface Scannable {
   id: string;
@@ -24,25 +23,23 @@ interface Scannable {
 /**
  * Substring search with a hard ceiling.
  *
- * A full scan of a 161k-row table takes seconds, so the scan stops after
- * SCAN_BUDGET rows. That keeps typing responsive; very obscure titles deep in the
- * catalogue may need a narrower query.
+ * A full scan of a 161k-row table takes seconds, so the scan gives up after
+ * SCAN_BUDGET rows. It uses one sequential cursor pass with `until` rather than
+ * offset paging, because `offset` re-walks the index from the start on every chunk.
  */
 async function scan<T extends Scannable>(table: Table<T, string>, needle: string, limit: number): Promise<T[]> {
   const wanted = needle.toLowerCase();
   const found: T[] = [];
   let scanned = 0;
-  let offset = 0;
 
-  while (found.length < limit && scanned < SCAN_BUDGET) {
-    const chunk = await table.orderBy('name').offset(offset).limit(CHUNK).toArray();
-    if (chunk.length === 0) break;
-    for (const row of chunk) {
+  await table
+    .orderBy('name')
+    .until(() => found.length >= limit || scanned >= SCAN_BUDGET)
+    .each((row) => {
+      scanned += 1;
       if (row.name.toLowerCase().includes(wanted)) found.push(row);
-    }
-    offset += chunk.length;
-    scanned += chunk.length;
-  }
+    });
+
   return found.slice(0, limit);
 }
 
