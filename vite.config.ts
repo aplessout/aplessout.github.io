@@ -28,7 +28,8 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,png,svg,webp}'],
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api/],
+        // The validator is a separate document; the app shell must not replace it.
+        navigateFallbackDenylist: [/^\/api/, /^\/roku-test\.html$/],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/image\.tmdb\.org\/.*/i,
