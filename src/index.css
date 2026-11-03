@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    background-color: #0b0b0f;
+  }
+
+  body {
+    @apply bg-ink text-white antialiased;
+    overscroll-behavior-y: none;
+  }
+
+  ::selection {
+    background: rgba(229, 9, 20, 0.35);
+  }
+}
+
+@layer utilities {
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
