@@ -149,6 +149,14 @@ export default function Settings() {
           <li>Optionally read the status code and open <code className="text-white/40">?roku=&lt;code&gt;</code> to return to this app.</li>
           <li>Enable Roku → Settings → System → Advanced system settings → Control by mobile apps.</li>
         </ol>
+        <a
+          href="/roku-test.html"
+          target="_blank"
+          rel="noreferrer"
+          className="mt-4 inline-block rounded-lg border border-white/15 px-4 py-2 text-[13px] text-white/80 transition hover:border-white/35"
+        >
+          Open Roku validator
+        </a>
         <p className="mt-3 text-[11px] uppercase tracking-wide text-white/30">Test URL for this configuration</p>
         <code className="mt-1 block break-all rounded-lg bg-black/40 px-3 py-2 text-[11px] leading-relaxed text-white/55">{sampleLaunch}</code>
         <p className="mt-2 text-[11.5px] leading-relaxed text-white/35">
