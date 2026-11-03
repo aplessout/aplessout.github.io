@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { db, getSetting, setSetting, type ProviderConfig } from '../db';
-import { authenticate, normalizeBase } from '../lib/xtream';
+import { authenticate, isBlockedByMixedContent, normalizeBase } from '../lib/xtream';
 import { buildLaunchUrl, isIos } from '../lib/roku';
 import { useCatalogue } from '../store';
 import { SectionHeader } from '../components/ui';
@@ -97,6 +97,13 @@ export default function Settings() {
         <p className="mt-1 text-[12px] leading-relaxed text-white/45">
           Xtream Codes API. Credentials stay in this browser's IndexedDB and are never sent anywhere except your provider.
         </p>
+        {isBlockedByMixedContent(baseUrl) && (
+          <p className="mt-3 rounded-lg border border-brand/40 bg-brand/10 px-3 py-2 text-[12px] leading-relaxed text-brand">
+            This server URL is plain http and this page is https, so the browser will block every request to it —
+            including the catalogue and playback. Open the app over http (for example the local dev server), or ask
+            your provider for an https server URL.
+          </p>
+        )}
         <div className="mt-4 space-y-2.5">
           <input className={field} placeholder="Server URL (e.g. http://provider.example:8080)" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
           <input className={field} placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} />

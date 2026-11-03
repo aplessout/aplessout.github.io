@@ -184,3 +184,20 @@ export function rokuFormatFor(url: string): 'hls' | 'mp4' | 'mkv' {
   if (lower.includes('.mkv')) return 'mkv';
   return 'mp4';
 }
+
+/**
+ * True when this page is https and the target is plain http.
+ *
+ * Browsers block that as mixed content, and no setting on our side can override it.
+ * Loopback is exempt because it counts as potentially trustworthy.
+ */
+export function isBlockedByMixedContent(target: string): boolean {
+  if (typeof window === 'undefined' || window.location.protocol !== 'https:') return false;
+  if (!/^http:\/\//i.test(target)) return false;
+  try {
+    const host = new URL(target).hostname;
+    return host !== 'localhost' && host !== '127.0.0.1' && host !== '[::1]';
+  } catch {
+    return false;
+  }
+}

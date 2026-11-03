@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { db, getSetting, type Kind } from '../db';
 import { dispatchToRoku, buildLaunchUrl, isIos } from '../lib/roku';
-import { streamUrl } from '../lib/xtream';
+import { isBlockedByMixedContent, streamUrl } from '../lib/xtream';
 import { useCatalogue } from '../store';
 import { PosterImage } from './ui';
 
@@ -35,6 +35,12 @@ export default function PlaySheet({ target, onClose }: { target: PlayTarget | nu
   async function playOnDevice() {
     if (!url) {
       setNote('Connect your provider in Settings first — demo entries have no real stream.');
+      return;
+    }
+    if (isBlockedByMixedContent(url)) {
+      setNote(
+        'This stream is http:// while the app is served over https://, so the browser blocks it before it reaches your device. Roku still works, because the Shortcut fetches the stream, not the browser.'
+      );
       return;
     }
     setMode('device');
