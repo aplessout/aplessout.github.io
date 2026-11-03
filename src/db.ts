@@ -108,6 +108,14 @@ class IptvDb extends Dexie {
       progress: 'key, updatedAt',
       settings: 'key',
     });
+
+    // v2 adds the indexes needed to page a large catalogue instead of loading it
+    // whole: recency for movies, channel numbers for live.
+    this.version(2).stores({
+      live: 'id, categoryId, name, num',
+      movies: 'id, categoryId, name, added',
+      series: 'id, categoryId, name',
+    });
   }
 }
 
@@ -120,4 +128,14 @@ export async function getSetting<K extends keyof AppSettings>(key: K): Promise<A
 
 export async function setSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]): Promise<void> {
   await db.settings.put({ key, value });
+}
+
+/** Bulk writes are chunked so a 50k-row catalogue never blocks the main thread in one go. */
+export async function replaceAll<T>(table: Table<T, string>, rows: T[]): Promise<void> {
+  const CHUNK = 4000;
+  await table.clear();
+  for (let index = 0; index < rows.length; index += CHUNK) {
+    await table.bulkPut(rows.slice(index, index + CHUNK));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }

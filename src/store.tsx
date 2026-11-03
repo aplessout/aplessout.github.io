@@ -10,6 +10,7 @@ import {
 import {
   db,
   getSetting,
+  replaceAll,
   type Destination,
   type Favourite,
   type HistoryEntry,
@@ -20,12 +21,23 @@ import {
   type Series,
 } from './db';
 import { seedDemo } from './lib/fixtures';
-import { fetchLive, fetchMovies, fetchSeries } from './lib/xtream';
+import { fetchCategories, fetchLive, fetchMovies, fetchSeries } from './lib/xtream';
+
+/** Home only ever renders a handful of titles, so it never needs the full table. */
+const HOME_LIMIT = 24;
+const LIVE_RAIL_LIMIT = 400;
+
+export interface CatalogueCounts {
+  live: number;
+  movie: number;
+  series: number;
+}
 
 interface CatalogueContext {
   live: LiveChannel[];
   movies: Movie[];
   series: Series[];
+  counts: CatalogueCounts;
   favourites: Favourite[];
   history: HistoryEntry[];
   provider: ProviderConfig | null;
@@ -47,6 +59,7 @@ export function CatalogueProvider({ children }: { children: ReactNode }) {
   const [live, setLive] = useState<LiveChannel[]>([]);
   const [movies, setMovies] = useState<Movie[]>([]);
   const [series, setSeries] = useState<Series[]>([]);
+  const [counts, setCounts] = useState<CatalogueCounts>({ live: 0, movie: 0, series: 0 });
   const [favourites, setFavourites] = useState<Favourite[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [provider, setProvider] = useState<ProviderConfig | null>(null);
@@ -54,20 +67,26 @@ export function CatalogueProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState('');
 
   const reload = useCallback(async () => {
-    const [liveRows, movieRows, seriesRows, favouriteRows, historyRows, savedProvider] = await Promise.all([
-      db.live.toArray(),
-      db.movies.toArray(),
-      db.series.toArray(),
-      db.favourites.toArray(),
-      db.history.orderBy('playedAt').reverse().limit(40).toArray(),
-      getSetting('provider'),
-    ]);
-    setLive(liveRows.sort((a, b) => (a.num ?? 0) - (b.num ?? 0)));
-    setMovies(movieRows.sort((a, b) => (b.added ?? 0) - (a.added ?? 0)));
-    setSeries(seriesRows.sort((a, b) => a.name.localeCompare(b.name)));
+    const [liveRows, movieRows, seriesRows, favouriteRows, historyRows, savedProvider, liveCount, movieCount, seriesCount] =
+      await Promise.all([
+        db.live.orderBy('num').limit(LIVE_RAIL_LIMIT).toArray(),
+        db.movies.orderBy('added').reverse().limit(HOME_LIMIT).toArray(),
+        db.series.orderBy('name').limit(HOME_LIMIT).toArray(),
+        db.favourites.toArray(),
+        db.history.orderBy('playedAt').reverse().limit(40).toArray(),
+        getSetting('provider'),
+        db.live.count(),
+        db.movies.count(),
+        db.series.count(),
+      ]);
+
+    setLive(liveRows);
+    setMovies(movieRows);
+    setSeries(seriesRows);
     setFavourites(favouriteRows.sort((a, b) => b.addedAt - a.addedAt));
     setHistory(historyRows);
     setProvider(savedProvider ?? null);
+    setCounts({ live: liveCount, movie: movieCount, series: seriesCount });
   }, []);
 
   useEffect(() => {
@@ -85,23 +104,31 @@ export function CatalogueProvider({ children }: { children: ReactNode }) {
 
   const syncProvider = useCallback(
     async (creds: ProviderConfig) => {
-      setStatus('Contacting provider…');
+      setStatus('Downloading catalogue…');
       try {
-        const [liveRows, movieRows, seriesRows] = await Promise.all([
+        const [liveRows, movieRows, seriesRows, liveCategories, movieCategories, seriesCategories] = await Promise.all([
           fetchLive(creds),
           fetchMovies(creds),
           fetchSeries(creds),
+          fetchCategories(creds, 'live').catch(() => []),
+          fetchCategories(creds, 'movie').catch(() => []),
+          fetchCategories(creds, 'series').catch(() => []),
         ]);
-        await db.transaction('rw', [db.live, db.movies, db.series], async () => {
-          await db.live.clear();
-          await db.movies.clear();
-          await db.series.clear();
-          await db.live.bulkPut(liveRows);
-          await db.movies.bulkPut(movieRows);
-          await db.series.bulkPut(seriesRows);
-        });
+
+        setStatus(
+          `Writing ${liveRows.length + movieRows.length + seriesRows.length} entries… this is the slow part, once.`
+        );
+
+        await db.categories.clear();
+        await db.categories.bulkPut([...liveCategories, ...movieCategories, ...seriesCategories]);
+        await replaceAll<LiveChannel>(db.live, liveRows);
+        await replaceAll<Movie>(db.movies, movieRows);
+        await replaceAll<Series>(db.series, seriesRows);
+
         await reload();
-        setStatus(`Synced ${liveRows.length} channels, ${movieRows.length} movies, ${seriesRows.length} series.`);
+        setStatus(
+          `Synced ${liveRows.length} channels, ${movieRows.length} movies and ${seriesRows.length} series. Browsing now reads from local storage only.`
+        );
       } catch (error) {
         // Existing catalogue is deliberately left untouched on failure.
         setStatus(error instanceof Error ? error.message : 'Sync failed.');
@@ -144,7 +171,7 @@ export function CatalogueProvider({ children }: { children: ReactNode }) {
         playedAt: Date.now(),
       };
       await db.history.put(entry);
-      setHistory((await db.history.orderBy('playedAt').reverse().limit(40).toArray()) ?? []);
+      setHistory(await db.history.orderBy('playedAt').reverse().limit(40).toArray());
     },
     []
   );
@@ -154,6 +181,7 @@ export function CatalogueProvider({ children }: { children: ReactNode }) {
       live,
       movies,
       series,
+      counts,
       favourites,
       history,
       provider,
@@ -168,7 +196,23 @@ export function CatalogueProvider({ children }: { children: ReactNode }) {
       toggleFavourite,
       recordHistory,
     }),
-    [live, movies, series, favourites, history, provider, loading, status, reload, seed, syncProvider, clearCatalogue, toggleFavourite, recordHistory]
+    [
+      live,
+      movies,
+      series,
+      counts,
+      favourites,
+      history,
+      provider,
+      loading,
+      status,
+      reload,
+      seed,
+      syncProvider,
+      clearCatalogue,
+      toggleFavourite,
+      recordHistory,
+    ]
   );
 
   return <CatalogueCtx.Provider value={value}>{children}</CatalogueCtx.Provider>;
