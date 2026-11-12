@@ -1,19 +1,477 @@
 <!doctype html>
-<html lang="en" class="dark">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0b0b0f" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="IPTV" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="icon" type="image/png" href="/icon-192.png" />
-    <title>IPTV</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>trex search</title>
+<style>
+:root{--bg:#fff;--fg:#111;--card:#f2f2f5;--accent:#4f46e5;--mut:#666}
+@media (prefers-color-scheme:dark){:root{--bg:#0e0e12;--fg:#eee;--card:#1c1c24;--mut:#999}}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--fg);
+ padding:env(safe-area-inset-top) 12px env(safe-area-inset-bottom)}
+header{position:sticky;top:0;background:var(--bg);padding:12px 0 8px;z-index:5}
+.row{display:flex;gap:8px}
+input[type=search],input[type=text],input[type=password],input[type=url]{width:100%;font-size:17px;padding:13px;
+ border-radius:12px;border:1px solid #8884;background:var(--card);color:var(--fg)}
+button{font:inherit;color:inherit}
+.tabs button,.gear{padding:10px;border-radius:10px;border:0;background:var(--card);font-size:15px}
+.tabs{display:flex;gap:8px;margin-top:8px}.tabs button{flex:1}
+.tabs button.on{background:var(--accent);color:#fff}
+.gear{width:48px;flex:none;font-size:20px}
+#status{font-size:12px;color:var(--mut);margin-top:6px;min-height:16px}
+.item{display:flex;gap:12px;background:var(--card);border-radius:12px;padding:10px;margin:10px 0}
+.item img{width:56px;height:80px;object-fit:cover;border-radius:8px;background:#8883;flex:none}
+.item h3{margin:0 0 4px;font-size:16px;word-break:break-word}
+.mut{color:var(--mut);font-size:13px}
+.act{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.act a,.act button{padding:9px 12px;border-radius:9px;border:0;background:var(--accent);color:#fff;
+ font-size:14px;text-decoration:none}
+.act .alt{background:#8885;color:inherit}
+details{margin-top:6px}summary{padding:6px 0}
+.ep{padding:8px 0;border-top:1px solid #8883}
+.marks{display:flex;gap:6px;margin-top:2px}
+.ic{width:38px;height:32px;border-radius:9px;border:0;background:#8883;font-size:16px;color:inherit}
+.ic.on{background:var(--accent);color:#fff}
+.tabs button{padding:10px 4px}
+dialog{width:min(92vw,480px);border:0;border-radius:16px;background:var(--bg);color:var(--fg);padding:18px}
+dialog::backdrop{background:#0008}
+label{display:block;font-size:13px;color:var(--mut);margin:12px 0 4px}
+.hint{font-size:12px;color:var(--mut);margin:6px 0}
+.btns{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.btns button{padding:11px 14px;border-radius:10px;border:0;background:var(--accent);color:#fff}
+.btns .alt{background:#8885;color:inherit}
+</style></head><body>
+<header>
+ <div class="row">
+  <input id="q" type="search" placeholder="Search movies & TV…" autocomplete="off">
+  <button class="gear" id="gear" aria-label="Settings">⚙</button>
+ </div>
+ <div class="tabs">
+  <button data-k="" class="on">All</button><button data-k="m">Movies</button><button data-k="t">TV</button><button data-k="fav">♥</button><button data-k="later">Later</button>
+ </div>
+ <div id="status"></div>
+</header>
+<main id="res"></main>
+
+<dialog id="dlg">
+ <h2 style="margin:0">Settings</h2>
+ <label>Server (Xtream)</label><input id="base" type="url" placeholder="http://provider.example:8080">
+ <label>Username</label><input id="user" type="text" autocapitalize="off" autocomplete="off">
+ <label>Password</label><input id="pass" type="password" autocomplete="off">
+ <p class="hint">— or use an M3U playlist —</p>
+ <label>M3U URL</label><input id="m3u" type="url" placeholder="http://…/get.php?username=…&type=m3u_plus">
+ <label>CORS proxy (optional, fixes “Failed to fetch”)</label>
+ <input id="proxy" type="url" placeholder="https://your-worker.workers.dev/?k=SECRET">
+ <label>Import M3U file (works even if the browser blocks direct requests)</label>
+ <input id="file" type="file" accept=".m3u,.m3u8,.txt,text/plain,audio/x-mpegurl">
+ <label>Roku IP address (for “Play on Roku”)</label>
+ <input id="roku" type="text" inputmode="decimal" placeholder="192.168.1.50" autocapitalize="off">
+ <label>Media Assistant channel ID (use “dev” if sideloaded)</label>
+ <input id="rokuch" type="text" placeholder="782875" autocapitalize="off">
+ <label>iOS Shortcut name (needed when this page is on https, e.g. GitHub Pages)</label>
+ <input id="rokush" type="text" placeholder="Play on Roku" autocapitalize="off">
+ <label><input id="live" type="checkbox"> Include live channels (uses more memory)</label>
+ <p class="hint" id="dlhint"></p>
+ <div class="btns">
+  <button id="save">Save &amp; load</button>
+  <button id="close" class="alt">Close</button>
+  <button id="wipe" class="alt">Clear cached data</button>
+ </div>
+ <label>Backup of favorites &amp; watch list</label>
+ <div class="btns" style="margin-top:4px"><button id="exp" class="alt" type="button">Export</button></div>
+ <label>Import lists (merges into current)</label>
+ <input id="imp" type="file" accept=".json,application/json">
+ <p class="hint">Credentials are stored only in this browser on this device. Lists are saved per web address, so export them before changing the page's address.</p>
+</dialog>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const enc = encodeURIComponent;
+const TTL = 6 * 3600 * 1000;
+const KIND = { MOVIE: 0, SERIES: 1, LIVE: 2, EP: 3 };
+
+/* ---------- IndexedDB (no 5 MB localStorage limit; catalog stays on disk between visits) ---------- */
+const idb = () => new Promise((ok, no) => {
+  const r = indexedDB.open("trex", 1);
+  r.onupgradeneeded = () => r.result.createObjectStore("kv");
+  r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error);
+});
+async function idbGet(k) { const d = await idb(); return new Promise((ok, no) => {
+  const q = d.transaction("kv").objectStore("kv").get(k); q.onsuccess = () => ok(q.result); q.onerror = () => no(q.error); }); }
+async function idbSet(k, v) { const d = await idb(); return new Promise((ok, no) => {
+  const t = d.transaction("kv", "readwrite"); t.objectStore("kv").put(v, k); t.oncomplete = ok; t.onerror = () => no(t.error); }); }
+async function idbDel(k) { const d = await idb(); return new Promise((ok, no) => {
+  const t = d.transaction("kv", "readwrite"); t.objectStore("kv").delete(k); t.oncomplete = ok; t.onerror = () => no(t.error); }); }
+
+/* ---------- settings ---------- */
+const getSettings = () => { try { return JSON.parse(localStorage.getItem("trexSettings")) || {}; } catch { return {}; } };
+const setSettings = s => localStorage.setItem("trexSettings", JSON.stringify(s));
+
+/* ---------- compact columnar catalog ----------
+   Instead of one object per title (heavy), we keep parallel arrays, and store each URL as
+   (shared prefix index + short tail). Credentials/host appear once per prefix, not 100k times. */
+function builder() {
+  const b = { n: [], k: [], pi: [], r: [], y: [], p: [], pfx: [], map: new Map() };
+  b.add = (name, kind, prefix, tail, year, poster) => {
+    let i = b.map.get(prefix);
+    if (i === undefined) { i = b.pfx.length; b.pfx.push(prefix); b.map.set(prefix, i); }
+    b.n.push(String(name || "").trim()); b.k.push(kind); b.pi.push(i);
+    b.r.push(String(tail)); b.y.push(year || ""); b.p.push(poster || "");
+  };
+  b.finish = mode => ({ ts: Date.now(), mode, n: b.n, k: Uint8Array.from(b.k), pi: Int32Array.from(b.pi),
+                        r: b.r, y: b.y, p: b.p, pfx: b.pfx });
+  return b;
+}
+
+let cat = null, keys = [];
+const norm = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+function hydrate(c) { cat = c; keys = new Array(c.n.length); for (let i = 0; i < keys.length; i++) keys[i] = norm(c.n[i]); }
+const urlOf = i => cat.pfx[cat.pi[i]] + cat.r[i];
+
+/* ---------- loaders ---------- */
+const via = (s, u) => s.proxy ? s.proxy + (s.proxy.includes("?") ? "&" : "?") + "url=" + enc(u) : u;
+async function xt(s, action, extra = "") {
+  const u = `${s.base}/player_api.php?username=${enc(s.user)}&password=${enc(s.pass)}&action=${action}${extra}`;
+  const r = await fetch(via(s, u)); if (!r.ok) throw new Error("HTTP " + r.status); return r.json();
+}
+async function loadXtream(s) {
+  const b = builder(), base = s.base.replace(/\/+$/, ""); s = { ...s, base };
+  const U = enc(s.user), P = enc(s.pass);
+  status("Loading movies…");
+  let vod = await xt(s, "get_vod_streams");
+  const pm = `${base}/movie/${U}/${P}/`;
+  for (const m of vod) b.add(m.name, KIND.MOVIE, pm, `${m.stream_id}.${m.container_extension || "mp4"}`, String(m.year || "").slice(0, 4), m.stream_icon);
+  vod = null;                                   // release raw JSON before fetching the next batch
+  status("Loading series…");
+  let ser = await xt(s, "get_series");
+  for (const x of ser) b.add(x.name, KIND.SERIES, "", x.series_id, String(x.year || x.releaseDate || "").slice(0, 4), x.cover);
+  ser = null;
+  if (s.live) {
+    status("Loading live channels…");
+    let lv = await xt(s, "get_live_streams"); const pl = `${base}/live/${U}/${P}/`;
+    for (const c of lv) b.add(c.name, KIND.LIVE, pl, `${c.stream_id}.m3u8`, "", c.stream_icon);
+    lv = null;
+  }
+  return b.finish("xtream");
+}
+
+// Streams the playlist line by line so the full text is never held in memory at once.
+async function* lines(stream) {
+  const rd = stream.getReader(), dec = new TextDecoder(); let buf = "";
+  for (;;) {
+    const { done, value } = await rd.read(); if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let s = 0, i; while ((i = buf.indexOf("\n", s)) >= 0) { yield buf.slice(s, i); s = i + 1; }
+    buf = buf.slice(s);
+  }
+  buf += dec.decode(); if (buf) yield buf;
+}
+async function parseM3U(stream, includeLive) {
+  const b = builder(); let cur = null, n = 0;
+  for await (let line of lines(stream)) {
+    line = line.trim();
+    if (line.startsWith("#EXTINF")) {
+      const nm = /tvg-name="([^"]*)"/.exec(line), lg = /tvg-logo="([^"]*)"/.exec(line);
+      cur = { name: (nm && nm[1]) || line.slice(line.lastIndexOf(",") + 1), logo: lg ? lg[1] : "" };
+    } else if (line && line[0] !== "#" && cur) {
+      const kind = line.includes("/movie/") ? KIND.MOVIE : line.includes("/series/") ? KIND.EP : KIND.LIVE;
+      if (kind !== KIND.LIVE || includeLive) {
+        const cut = line.lastIndexOf("/") + 1;
+        b.add(cur.name, kind, line.slice(0, cut), line.slice(cut), "", cur.logo);
+      }
+      cur = null;
+      if (++n % 5000 === 0) { status(`Parsed ${n.toLocaleString()} entries…`); await new Promise(r => setTimeout(r)); }
+    }
+  }
+  return b.finish("m3u");
+}
+
+async function refresh(file) {
+  const s = getSettings();
+  try {
+    let c;
+    if (file) c = await parseM3U(file.stream(), s.live);
+    else if (s.base && s.user) c = await loadXtream(s);
+    else if (s.m3u) { const r = await fetch(via(s, s.m3u)); if (!r.ok) throw new Error("HTTP " + r.status); c = await parseM3U(r.body, s.live); }
+    else { $("#dlg").showModal(); return; }
+    await idbSet("cat", c); hydrate(c); search();
+  } catch (e) {
+    status(e instanceof TypeError
+      ? "Browser blocked the request (CORS or http/https mix). Set a CORS proxy in ⚙, or download the playlist and use “Import M3U file”."
+      : "Load failed: " + e.message);
+    return;
+  }
+  showStatus();
+}
+
+/* ---------- search ---------- */
+function find(q, tab) {
+  const t = norm(q).split(/\s+/).filter(Boolean); if (!t.length) return [];
+  const hits = [], first = norm(q).trim();
+  for (let i = 0; i < keys.length && hits.length < 400; i++) {
+    const k = cat.k[i];
+    if (tab === "m" && k !== KIND.MOVIE) continue;
+    if (tab === "t" && k !== KIND.SERIES && k !== KIND.EP) continue;
+    const key = keys[i]; let ok = true;
+    for (const w of t) if (!key.includes(w)) { ok = false; break; }
+    if (ok) hits.push(i);
+  }
+  hits.sort((a, b) => (keys[b].startsWith(first) - keys[a].startsWith(first)) || (keys[a].length - keys[b].length));
+  return hits.slice(0, 60);       // only ever render a small page of results
+}
+
+/* ---------- UI ---------- */
+let tab = "", timer;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function status(t) { $("#status").textContent = t; }
+function showStatus() {
+  if (!cat) return status("No catalog loaded. Open settings (⚙).");
+  const mins = Math.round((Date.now() - cat.ts) / 60000);
+  status(`${cat.n.length.toLocaleString()} titles · updated ${mins < 90 ? mins + " min" : Math.round(mins / 60) + " h"} ago`);
+}
+const actions = (u, title = "", sub = "", vod = "") => `<div class="act"><a href="${esc(u)}">Play</a>
+  <button data-roku="${esc(u)}" data-title="${esc(title)}" data-sub="${esc(sub)}">Play on Roku</button>
+  <button class="alt" data-vlc="${esc(u)}" data-title="${esc(title)}" data-sub="${esc(sub)}">Open in VLC</button>
+  <button class="alt" data-subs="${esc(vod)}">${sub ? "Subtitles ✓" : "Subtitles"}</button>
+  <button class="alt" data-copy="${esc(u)}">Copy link</button></div>`;
+
+/* ---------- favorites & watch list ----------
+   Saved as small snapshots (name, poster, year, id) in IndexedDB. They survive catalog refreshes.
+   For Xtream, the stream link is rebuilt from current settings, so changing credentials doesn't break them. */
+let lists = { fav: [], watch: [] };
+const shown = new Map();
+const kindLabel = k => k === KIND.MOVIE ? "movie" : k === KIND.LIVE ? "live" : "TV";
+const keyOf = e => e.mode === "xtream" ? e.k + "|" + e.ref : (e.url || e.ref);
+const itemAt = i => ({ k: cat.k[i], name: cat.n[i], y: cat.y[i], p: cat.p[i], ref: cat.r[i], mode: cat.mode,
+                       url: cat.mode === "m3u" ? urlOf(i) : "" });
+function entryUrl(e) {
+  const s = getSettings();
+  if (e.mode === "xtream" && s.base) {
+    const base = s.base.replace(/\/+$/, ""), U = enc(s.user), P = enc(s.pass);
+    if (e.k === KIND.MOVIE) return `${base}/movie/${U}/${P}/${e.ref}`;
+    if (e.k === KIND.LIVE) return `${base}/live/${U}/${P}/${e.ref}`;
+  }
+  return e.url || "";
+}
+const inList = (name, key) => lists[name].some(x => keyOf(x) === key);
+async function toggleList(name, it) {
+  const key = keyOf(it), i = lists[name].findIndex(x => keyOf(x) === key);
+  if (i >= 0) lists[name].splice(i, 1); else lists[name].unshift(it);
+  try { await idbSet("lists", lists); } catch {}
+}
+function cardHtml(it) {
+  const key = keyOf(it); shown.set(key, it);
+  const vod = it.k === KIND.MOVIE && it.mode === "xtream" ? parseInt(it.ref) : "";
+  return `<div class="item"><img loading="lazy" referrerpolicy="no-referrer" src="${esc(it.p || "")}" alt=""
+    onerror="this.style.visibility='hidden'">
+    <div style="flex:1;min-width:0"><h3>${esc(it.name)}</h3>
+    <div class="mut">${kindLabel(it.k)}${it.y ? " · " + esc(it.y) : ""}</div>
+    <div class="marks">
+     <button class="ic${inList("fav", key) ? " on" : ""}" data-fav="${esc(key)}" aria-label="Favorite" title="Favorite">♥</button>
+     <button class="ic${inList("watch", key) ? " on" : ""}" data-watch="${esc(key)}" aria-label="Watch later" title="Watch later">＋</button>
+    </div>
+    ${it.k === KIND.SERIES ? `<div class="act"><button data-eps="${esc(it.ref)}">Episodes</button></div><div class="eps"></div>`
+                           : actions(entryUrl(it), it.name, "", vod)}</div></div>`;
+}
+
+function search() {
+  const q = $("#q").value.trim(), res = $("#res");
+  shown.clear();
+  if (tab === "fav" || tab === "later") {
+    const list = lists[tab === "fav" ? "fav" : "watch"];
+    const t = norm(q).split(/\s+/).filter(Boolean);
+    const items = list.filter(it => t.every(w => norm(it.name).includes(w)));
+    res.innerHTML = items.length ? items.map(cardHtml).join("")
+      : `<p class="mut">${list.length ? "No matches." : tab === "fav" ? "No favorites yet. Tap ♥ on a title." : "Nothing queued. Tap ＋ on a title."}</p>`;
+    return;
+  }
+  if (!cat || !q) { res.innerHTML = ""; return; }
+  const hits = find(q, tab);
+  if (!hits.length) { res.innerHTML = '<p class="mut">No results.</p>'; return; }
+  res.innerHTML = hits.map(i => cardHtml(itemAt(i))).join("");
+}
+
+async function loadEpisodes(id, box) {
+  const s = getSettings(), base = s.base.replace(/\/+$/, "");
+  box.innerHTML = '<p class="mut">Loading…</p>';
+  try {
+    const d = await xt({ ...s, base }, "get_series_info", "&series_id=" + enc(id));
+    const seasons = d.episodes || {};
+    box.innerHTML = Object.keys(seasons).sort((a, b) => a - b).map(sn => `<details><summary>Season ${esc(sn)}</summary>${
+      seasons[sn].map(e => `<div class="ep">${esc("E" + e.episode_num + " · " + (e.title || ""))}${
+        actions(`${base}/series/${enc(s.user)}/${enc(s.pass)}/${e.id}.${e.container_extension || "mp4"}`, `${(d.info && d.info.name) || ""} S${sn}E${e.episode_num}`, [...findSubs(e)][0] || "")}</div>`).join("")}</details>`).join("")
+      || '<p class="mut">No episodes.</p>';
+  } catch (e) { box.innerHTML = '<p class="mut">Could not load episodes.</p>'; }
+}
+
+async function copy(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {                                   // clipboard API needs https; fall back for plain-http hosting
+    const t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select();
+    try { document.execCommand("copy"); } catch { prompt("Copy link", text); } t.remove();
+  }
+  const old = btn.textContent; btn.textContent = "Copied ✓"; setTimeout(() => btn.textContent = old, 1500);
+}
+
+// Xtream has no standard subtitle field, so scan the provider's JSON for subtitle-looking links.
+function findSubs(o, out = new Set(), d = 0) {
+  if (!o || d > 6) return out;
+  if (typeof o === "string") {
+    if (/^https?:\/\/\S+\.(srt|vtt|ttml|dfxp|ass|ssa)(\?\S*)?$/i.test(o)) out.add(o);
+  } else if (Array.isArray(o)) o.forEach(x => findSubs(x, out, d + 1));
+  else if (typeof o === "object") for (const k in o) {
+    if (/sub/i.test(k) && typeof o[k] === "string" && /^https?:\/\//i.test(o[k])) out.add(o[k]);
+    findSubs(o[k], out, d + 1);
+  }
+  return out;
+}
+
+async function pickSubs(btn) {
+  const s = getSettings(), row = btn.closest(".act");
+  let list = [];
+  if (btn.dataset.subs && cat && cat.mode === "xtream") {
+    status("Looking for subtitles…");
+    try { list = [...findSubs(await xt({ ...s, base: s.base.replace(/\/+$/, "") }, "get_vod_info", "&vod_id=" + enc(btn.dataset.subs)))]; } catch {}
+    showStatus();
+  }
+  let sub = "";
+  if (list.length === 1) sub = list[0];
+  else if (list.length > 1) {
+    const n = prompt("Pick a subtitle:\n" + list.map((x, i) => `${i + 1}) ${x}`).join("\n"), "1");
+    sub = list[(parseInt(n) || 0) - 1] || "";
+  } else {
+    const tb = row.querySelector("[data-title]"), vb = row.querySelector("[data-vlc]");
+    const t = tb ? tb.dataset.title : "", u = vb ? vb.dataset.vlc : "";
+    const emb = /sub/i.test(t) || /\.mkv(?:$|[?#])/i.test(u);
+    sub = (prompt("No external subtitle links in your provider's data."
+      + (emb ? "\n\nThis title probably has subtitles built into the video file. Pick them in the player instead: in VLC tap the speech-bubble/subtitle button; on Roku press * on the remote." : "")
+      + "\n\nOr paste a subtitle URL (.srt works best); leave empty to cancel:", "") || "").trim();
+  }
+  row.querySelectorAll("[data-sub]").forEach(b => b.dataset.sub = sub);
+  btn.textContent = sub ? "Subtitles ✓" : "Subtitles";
+}
+
+function openVlc(url, title, sub) {
+  let go = "vlc://" + url;
+  if (sub) {
+    if (/Android/i.test(navigator.userAgent)) {
+      const m = /^(https?):\/\/(.*)$/i.exec(url);
+      if (m) go = `intent://${m[2]}#Intent;scheme=${m[1].toLowerCase()};package=org.videolan.vlc;type=video/*;S.title=${enc(title || "")};S.subtitles_location=${enc(sub)};end`;
+    } else if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+      go = `vlc-x-callback://x-callback-url/stream?url=${enc(url)}&sub=${enc(sub)}`;
+    }
+  }
+  location.href = go;
+}
+
+// Sends Media Assistant's deeplink to the Roku (HTTP POST, empty body, port 8060).
+// mode:"no-cors" lets the browser send it even though Roku sends no CORS headers; the reply is opaque.
+async function playRoku(url, title, sub, btn) {
+  const s = getSettings();
+  if (!s.roku) { fillDlg(); $("#dlg").showModal(); return; }
+  const ip = s.roku.replace(/^https?:\/\//, "").replace(/[:/].*$/, "");
+  const ch = (s.rokuChannel || "782875").trim();
+  let p = `u=${enc(url)}&t=v`;
+  if (title) p += `&videoName=${enc(title)}`;
+  if (sub) {
+    if (/\.vtt(?:$|[?#])/i.test(sub)) status("Roku can't load .vtt subtitles (needs .srt, .ttml or .dfxp), so it was sent without.");
+    else p += `&videoSubs=${enc(sub)}`;
+  }
+  const m = /\.(mp4|mkv|m3u8)(?:$|[?#])/i.exec(url);
+  if (m) p += "&videoFormat=" + (m[1].toLowerCase() === "m3u8" ? "hls" : m[1].toLowerCase());
+  const old = btn.textContent;
+  const target = `http://${ip}:8060/launch/${enc(ch)}?${p}`;
+  if (s.rokuShortcut) {   // the Shortcut does the POST, so browser CORS / https limits don't apply
+    btn.textContent = "Opening Shortcuts…";
+    location.href = `shortcuts://x-callback-url/run-shortcut?name=${enc(s.rokuShortcut)}&input=text&text=${enc(target)}&x-success=${enc(location.href.split("#")[0])}`;
+    setTimeout(() => btn.textContent = old, 3000);
+    return;
+  }
+  try {
+    await fetch(target, { method: "POST", mode: "no-cors" });
+    btn.textContent = "Sent ✓";
+  } catch {
+    btn.textContent = "Failed";
+    status("Couldn't reach the Roku. Same Wi-Fi? On an https page, set an iOS Shortcut name in ⚙ instead.");
+  }
+  setTimeout(() => btn.textContent = old, 2000);
+}
+
+$("#res").addEventListener("click", e => {
+  const r = e.target.closest("[data-roku]"); if (r) return playRoku(r.dataset.roku, r.dataset.title, r.dataset.sub || "", r);
+  const v = e.target.closest("[data-vlc]"); if (v) return openVlc(v.dataset.vlc, v.dataset.title, v.dataset.sub || "");
+  const sb = e.target.closest("[data-subs]"); if (sb) return pickSubs(sb);
+  const fv = e.target.closest("[data-fav]"), wl = e.target.closest("[data-watch]");
+  if (fv || wl) {
+    const b = fv || wl, name = fv ? "fav" : "watch", it = shown.get(fv ? fv.dataset.fav : wl.dataset.watch);
+    if (it) toggleList(name, it).then(() => {
+      if ((tab === "fav" && name === "fav") || (tab === "later" && name === "watch")) search();
+      else b.classList.toggle("on");
+    });
+    return;
+  }
+  const c = e.target.closest("[data-copy]"); if (c) return copy(c.dataset.copy, c);
+  const b = e.target.closest("[data-eps]"); if (b) loadEpisodes(b.dataset.eps, b.closest(".item").querySelector(".eps"));
+});
+$("#q").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(search, 250); });
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); tab = b.dataset.k; search();
+});
+
+/* settings dialog */
+function fillDlg() {
+  const s = getSettings();
+  $("#base").value = s.base || ""; $("#user").value = s.user || ""; $("#pass").value = s.pass || "";
+  $("#m3u").value = s.m3u || ""; $("#live").checked = !!s.live; $("#proxy").value = s.proxy || "";
+  $("#roku").value = s.roku || ""; $("#rokuch").value = s.rokuChannel || ""; $("#rokush").value = s.rokuShortcut || ""; hint();
+}
+function hint() {
+  const b = $("#base").value.replace(/\/+$/, ""), u = $("#user").value, p = $("#pass").value;
+  $("#dlhint").innerHTML = b && u
+    ? `Blocked? <a href="${esc(`${b}/get.php?username=${enc(u)}&password=${enc(p)}&type=m3u_plus&output=ts`)}">Download your playlist</a>, then import the file above.` : "";
+}
+["base", "user", "pass"].forEach(id => $("#" + id).addEventListener("input", hint));
+$("#gear").onclick = () => { fillDlg(); $("#dlg").showModal(); };
+$("#close").onclick = () => $("#dlg").close();
+$("#save").onclick = async () => {
+  setSettings({ base: $("#base").value.trim(), user: $("#user").value.trim(), pass: $("#pass").value,
+                m3u: $("#m3u").value.trim(), live: $("#live").checked, proxy: $("#proxy").value.trim(),
+                roku: $("#roku").value.trim(), rokuChannel: $("#rokuch").value.trim(),
+                rokuShortcut: $("#rokush").value.trim() });
+  const f = $("#file").files[0]; $("#dlg").close(); $("#file").value = "";
+  await refresh(f);
+};
+$("#wipe").onclick = async () => { await idbDel("cat"); cat = null; keys = []; $("#res").innerHTML = ""; showStatus(); };
+
+/* export / import lists */
+$("#exp").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(lists)], { type: "application/json" }));
+  a.download = "trex-lists.json"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+};
+$("#imp").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const d = JSON.parse(await f.text());
+    for (const name of ["fav", "watch"]) for (const it of d[name] || [])
+      if (it && it.name && !inList(name, keyOf(it))) lists[name].push(it);
+    await idbSet("lists", lists); status("Lists imported."); if (tab === "fav" || tab === "later") search();
+  } catch { status("Couldn't read that file."); }
+  e.target.value = "";
+};
+
+/* ---------- start ---------- */
+(async () => {
+  const saved = await idbGet("lists").catch(() => null);
+  if (saved) lists = { fav: saved.fav || [], watch: saved.watch || [] };
+  const c = await idbGet("cat").catch(() => null);
+  if (c) { hydrate(c); showStatus(); }
+  const s = getSettings(), configured = (s.base && s.user) || s.m3u;
+  if (!c && !configured) { fillDlg(); $("#dlg").showModal(); }
+  else if (configured && (!c || Date.now() - c.ts > TTL)) refresh();   // stale: keep searching the old copy meanwhile
+})();
+</script>
+</body></html>
