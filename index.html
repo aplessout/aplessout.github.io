@@ -61,16 +61,12 @@ label{display:block;font-size:13px;color:var(--mut);margin:12px 0 4px}
  <label>Password</label><input id="pass" type="password" autocomplete="off">
  <p class="hint">— or use an M3U playlist —</p>
  <label>M3U URL</label><input id="m3u" type="url" placeholder="http://…/get.php?username=…&type=m3u_plus">
- <label>CORS proxy (optional, fixes “Failed to fetch”)</label>
- <input id="proxy" type="url" placeholder="https://your-worker.workers.dev/?k=SECRET">
  <label>Import M3U file (works even if the browser blocks direct requests)</label>
  <input id="file" type="file" accept=".m3u,.m3u8,.txt,text/plain,audio/x-mpegurl">
  <label>Roku IP address (for “Play on Roku”)</label>
  <input id="roku" type="text" inputmode="decimal" placeholder="192.168.1.50" autocapitalize="off">
  <label>Media Assistant channel ID (use “dev” if sideloaded)</label>
  <input id="rokuch" type="text" placeholder="782875" autocapitalize="off">
- <label>iOS Shortcut name (needed when this page is on https, e.g. GitHub Pages)</label>
- <input id="rokush" type="text" placeholder="Play on Roku" autocapitalize="off">
  <label><input id="live" type="checkbox"> Include live channels (uses more memory)</label>
  <p class="hint" id="dlhint"></p>
  <div class="btns">
@@ -131,10 +127,9 @@ function hydrate(c) { cat = c; keys = new Array(c.n.length); for (let i = 0; i <
 const urlOf = i => cat.pfx[cat.pi[i]] + cat.r[i];
 
 /* ---------- loaders ---------- */
-const via = (s, u) => s.proxy ? s.proxy + (s.proxy.includes("?") ? "&" : "?") + "url=" + enc(u) : u;
 async function xt(s, action, extra = "") {
   const u = `${s.base}/player_api.php?username=${enc(s.user)}&password=${enc(s.pass)}&action=${action}${extra}`;
-  const r = await fetch(via(s, u)); if (!r.ok) throw new Error("HTTP " + r.status); return r.json();
+  const r = await fetch(u); if (!r.ok) throw new Error("HTTP " + r.status); return r.json();
 }
 async function loadXtream(s) {
   const b = builder(), base = s.base.replace(/\/+$/, ""); s = { ...s, base };
@@ -194,12 +189,12 @@ async function refresh(file) {
     let c;
     if (file) c = await parseM3U(file.stream(), s.live);
     else if (s.base && s.user) c = await loadXtream(s);
-    else if (s.m3u) { const r = await fetch(via(s, s.m3u)); if (!r.ok) throw new Error("HTTP " + r.status); c = await parseM3U(r.body, s.live); }
+    else if (s.m3u) { const r = await fetch(s.m3u); if (!r.ok) throw new Error("HTTP " + r.status); c = await parseM3U(r.body, s.live); }
     else { $("#dlg").showModal(); return; }
     await idbSet("cat", c); hydrate(c); search();
   } catch (e) {
     status(e instanceof TypeError
-      ? "Browser blocked the request (CORS or http/https mix). Set a CORS proxy in ⚙, or download the playlist and use “Import M3U file”."
+      ? "Request failed or was blocked by the browser. Check the URL and network, or download the playlist and use “Import M3U file”."
       : "Load failed: " + e.message);
     return;
   }
@@ -366,8 +361,8 @@ function openVlc(url, title, sub) {
   location.href = go;
 }
 
-// Sends Media Assistant's deeplink to the Roku (HTTP POST, empty body, port 8060).
-// mode:"no-cors" lets the browser send it even though Roku sends no CORS headers; the reply is opaque.
+// Sends Media Assistant's deeplink directly to the Roku (HTTP POST, empty body, port 8060).
+// The no-cors response is opaque, so a resolved fetch only confirms the request was sent.
 async function playRoku(url, title, sub, btn) {
   const s = getSettings();
   if (!s.roku) { fillDlg(); $("#dlg").showModal(); return; }
@@ -383,18 +378,12 @@ async function playRoku(url, title, sub, btn) {
   if (m) p += "&videoFormat=" + (m[1].toLowerCase() === "m3u8" ? "hls" : m[1].toLowerCase());
   const old = btn.textContent;
   const target = `http://${ip}:8060/launch/${enc(ch)}?${p}`;
-  if (s.rokuShortcut) {   // the Shortcut does the POST, so browser CORS / https limits don't apply
-    btn.textContent = "Opening Shortcuts…";
-    location.href = `shortcuts://x-callback-url/run-shortcut?name=${enc(s.rokuShortcut)}&input=text&text=${enc(target)}&x-success=${enc(location.href.split("#")[0])}`;
-    setTimeout(() => btn.textContent = old, 3000);
-    return;
-  }
   try {
     await fetch(target, { method: "POST", mode: "no-cors" });
     btn.textContent = "Sent ✓";
   } catch {
     btn.textContent = "Failed";
-    status("Couldn't reach the Roku. Same Wi-Fi? On an https page, set an iOS Shortcut name in ⚙ instead.");
+    status("Couldn't send the request to the Roku. Check that the device is reachable on the same network and that the browser allows the request.");
   }
   setTimeout(() => btn.textContent = old, 2000);
 }
@@ -425,8 +414,8 @@ document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
 function fillDlg() {
   const s = getSettings();
   $("#base").value = s.base || ""; $("#user").value = s.user || ""; $("#pass").value = s.pass || "";
-  $("#m3u").value = s.m3u || ""; $("#live").checked = !!s.live; $("#proxy").value = s.proxy || "";
-  $("#roku").value = s.roku || ""; $("#rokuch").value = s.rokuChannel || ""; $("#rokush").value = s.rokuShortcut || ""; hint();
+  $("#m3u").value = s.m3u || ""; $("#live").checked = !!s.live;
+  $("#roku").value = s.roku || ""; $("#rokuch").value = s.rokuChannel || ""; hint();
 }
 function hint() {
   const b = $("#base").value.replace(/\/+$/, ""), u = $("#user").value, p = $("#pass").value;
@@ -438,9 +427,8 @@ $("#gear").onclick = () => { fillDlg(); $("#dlg").showModal(); };
 $("#close").onclick = () => $("#dlg").close();
 $("#save").onclick = async () => {
   setSettings({ base: $("#base").value.trim(), user: $("#user").value.trim(), pass: $("#pass").value,
-                m3u: $("#m3u").value.trim(), live: $("#live").checked, proxy: $("#proxy").value.trim(),
-                roku: $("#roku").value.trim(), rokuChannel: $("#rokuch").value.trim(),
-                rokuShortcut: $("#rokush").value.trim() });
+                m3u: $("#m3u").value.trim(), live: $("#live").checked,
+                roku: $("#roku").value.trim(), rokuChannel: $("#rokuch").value.trim() });
   const f = $("#file").files[0]; $("#dlg").close(); $("#file").value = "";
   await refresh(f);
 };
